@@ -3,10 +3,12 @@ package dao;
 import entity.Order;
 import entity.Product;
 
+
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map.Entry;
 import java.util.Map;
 
 /**
@@ -17,38 +19,39 @@ public class OrderDao extends AbstractDao<Integer, Order> {
     // private Statement st = null;
     private PreparedStatement pst = null;
     Map<Product, Integer> orderedProducts;
-    public static final String SQL_SELECT_ALL_ORDERS = "SELECT * FROM `order`";
-    public static final String SQL_SELECT_ORDER_BY_ID = "SELECT * FROM order WHERE order_id = ?";
-    public static final String SQL_SELECT_RPODUCTS_BY_ORDER = "SELECT order.order_id,order.date, " +
+    private static final String SQL_SELECT_ALL_ORDERS = "SELECT * FROM `order`";
+
+    private static final String SQL_SELECT_RPODUCTS_BY_ORDER = "SELECT order.order_id,order.date, " +
             "product.name, product.description, product.price, product.product_id, ordered_products.quantity " +
             "FROM `order` " +
             "INNER JOIN ordered_products USING(order_id) " +
             "INNER JOIN product USING(product_id) " +
             "WHERE order_id = ?";
-    public static final String SQL_SELECT_ORDERS_WITH_CURRENT_SUM_AND_PRODUCTS = "SELECT COUNT(ordered_products.product_id) AS q, order.order_id, sum(price*quantity) " +
+    private static final String SQL_SELECT_ORDERS_WITH_CURRENT_SUM_AND_PRODUCTS = "SELECT COUNT(ordered_products.product_id) AS q, order.order_id, sum(price*quantity) " +
             "FROM `order` " +
             "INNER JOIN ordered_products USING(order_id) " +
             "INNER JOIN product USING(product_id) " +
             "GROUP BY ordered_products.order_id " +
             "HAVING (q = ?) and (sum(price*quantity) < ?)";
-    public static final String SQL_SELECT_ORDERS_WITH_CURRENT_PRODUCT = "SELECT order.order_id FROM `order` \n" +
+
+
+    private static final String SQL_SELECT_ORDERS_WITH_CURRENT_PRODUCT = "SELECT order.order_id FROM `order` \n" +
             "INNER JOIN ordered_products USING(order_id) \n" +
             "INNER JOIN product USING(product_id) \n" +
             "WHERE (product_id = ?)\n" +
             "GROUP BY ordered_products.order_id";
-    public static final String SQL_SELECT_ORDERS_WITHOUT_CURRENT_PRODUCT_AND_CUR_DATE = "SELECT order.order_id FROM `order` INNER JOIN ordered_products USING(order_id)\n" +
+    private static final String SQL_SELECT_ORDERS_WITHOUT_CURRENT_PRODUCT_AND_CUR_DATE = "SELECT order.order_id FROM `order` INNER JOIN ordered_products USING(order_id)\n" +
             "INNER JOIN product USING(product_id)\n" +
             "WHERE (product_id != ?)\n" +
             "AND DATE(date) = DATE(NOW())\n" +
             "GROUP BY ordered_products.order_id";
-    public static final String SQL_SELECT_ORDERS_WITH_CURRENT_DATE = "SELECT product.name, product.description, product.price, product.product_id, ordered_products.quantity " +
+    private static final String SQL_SELECT_ORDERS_WITH_CURRENT_DATE = "SELECT product.name, product.description, product.price, product.product_id, ordered_products.quantity " +
             "FROM `order` INNER JOIN ordered_products USING(order_id)\n" +
             "INNER JOIN product USING(product_id)\n" +
-            "WHERE  DATE(date) = DATE(NOW())\n" +
-            "GROUP BY ordered_products.order_id";
-    public static final String SQL_INSERT_ORDER = "INSERT INTO `order`(`order_id`, `date`) VALUES (null,curdate())";
-    public static final String SQL_SELECT_LAST_INSERT_ORDER = "SELECT MAX( order_id ) AS last FROM  `order`";
-    public static final String SQL_INSERT_ORDERED_PRODUCTS = "INSERT INTO `ordered_products`(`id`, `order_id`, `product_id`, `quantity`) " +
+            "WHERE  DATE(date) = DATE(NOW())";
+    private static final String SQL_INSERT_ORDER = "INSERT INTO `order`(`order_id`, `date`) VALUES (null,curdate())";
+    private static final String SQL_SELECT_LAST_INSERT_ORDER = "SELECT MAX(`order_id`) AS `last` FROM  `order`";
+    private static final String SQL_INSERT_ORDERED_PRODUCTS = "INSERT INTO `ordered_products`(`id`, `order_id`, `product_id`, `quantity`) " +
             "VALUES (null, ?, ?, ?)";
 
     @Override
@@ -164,42 +167,48 @@ public class OrderDao extends AbstractDao<Integer, Order> {
     public boolean createOrderConsistProductOfCurrentDate() {
         try {
             cn = ConnectorDB.getConnection();
-            Map<Product, Integer> productList = getProductsWithCurrentDate(cn);
-
-            pst = cn.prepareStatement(SQL_INSERT_ORDER);
-            pst.executeQuery();
-
-            pst = cn.prepareStatement(SQL_SELECT_LAST_INSERT_ORDER);
-            int lastOrderId = pst.executeQuery().getInt("last");
-
-            pst = cn.prepareStatement(SQL_INSERT_ORDERED_PRODUCTS);
-            for (Product product : productList.keySet()) {
-                int quantity = productList.get(product);
-                pst.setInt(1, lastOrderId);
-                pst.setInt(2, product.getId());
-                pst.setInt(3, quantity);
-                pst.executeQuery();
+            Map<Product, Integer> productList = new HashMap<>();
+            pst = cn.prepareStatement(SQL_SELECT_ORDERS_WITH_CURRENT_DATE);
+            ResultSet rs = pst.executeQuery();
+            while (rs.next()) {
+                String name = rs.getString("name");
+                int product_id = rs.getInt("product_id");
+                String desc = rs.getString("description");
+                double price = rs.getDouble("price");
+                productList.put(new Product(product_id, name, desc, price), rs.getInt("quantity"));
             }
-            return true;
+            if (productList.size() != 0) {
+                pst = cn.prepareStatement(SQL_INSERT_ORDER);
+                pst.executeUpdate();
+
+                pst = cn.prepareStatement(SQL_SELECT_LAST_INSERT_ORDER);
+                ResultSet rs2 = pst.executeQuery();
+                rs2.next();
+                int lastOrderId = rs2.getInt("last");
+
+                for (Entry<Product, Integer> entry : productList.entrySet()) {
+                    pst = cn.prepareStatement(SQL_INSERT_ORDERED_PRODUCTS);
+                    Product product = entry.getKey();
+                    System.out.println(entry.getKey());
+                    int quantity = entry.getValue();
+                    //int quantity = productList.get(product);
+                    pst.setInt(1, lastOrderId);
+                    pst.setInt(2, product.getId());
+                    pst.setInt(3, quantity);
+                    pst.executeUpdate();
+                }
+                return true;
+            }
+
         } catch (SQLException e) {
             System.err.println("SQL Exeption (request or table failed):" + e);
         }
         return false;
     }
 
-    private Map getProductsWithCurrentDate(Connection con) throws SQLException {
-        Map<Product, Integer> productList = new HashMap<>();
-        pst = cn.prepareStatement(SQL_SELECT_ORDERS_WITH_CURRENT_DATE);
-        ResultSet rs = pst.executeQuery();
-        while (rs.next()) {
-            String name = rs.getString("name");
-            int product_id = rs.getInt("product_id");
-            String desc = rs.getString("description");
-            double price = rs.getDouble("price");
-            productList.put(new Product(product_id, name, desc, price), rs.getInt("quantity"));
-        }
-        return productList;
-    }
+//    private Map getProductsWithCurrentDate(Connection con) throws SQLException {
+//
+//    }
 
     @Override
     public boolean delete(Integer id) {
